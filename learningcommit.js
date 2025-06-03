@@ -1,0 +1,1 @@
+console.log("hello i am learning how to commint in git i know how to work on bitbucket learning github and creat a another branch from master branch")

@@ -24,4 +24,6 @@ let  nums = [8,1,2,2,3]
     }
     console.log(arr)
 
-    Row_with_max_1s
+    // Row_with_max_1s
+
+    Build_Array_from_Permutation

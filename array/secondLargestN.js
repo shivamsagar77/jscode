@@ -16,3 +16,4 @@ console.log(secondM)
 // let arrr = [...set];
 // let n = arrr.length-2;
 // console.log(arrr[n])
+

@@ -1,0 +1,462 @@
+const { QueryTypes, Op } = require("sequelize");
+const sequelize = require("../db");
+const { TRANSACTION_TYPE, DOCUMENT_TYPE } = require("../constants");
+const {
+  generateDocumentId,
+  getDocumentSequences,
+} = require("../utils/documentSequences");
+
+// ORM Models
+const InventoryTransactions = require("../models/inventory_transactionsModel");
+const StockLog = require("../models/stock_log");
+const InventoryItemWiseDetail = require("../models/inventory_item_wise_detail");
+const InventoryItem = require("../models/inventory_itemsModel");
+
+const InwardStockTransaction = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  try {
+    console.log("🚀 InwardStockTransaction: API called");
+
+    // ──────────────────────────────────────────────────────────
+    // STEP 0 — Payload Validation (before any DB work)
+    // ──────────────────────────────────────────────────────────
+    const {
+      org_id,
+      transaction_type,
+      transaction_type_master_id,
+      sub_transaction_type,
+      sub_transaction_type_master_id,
+      transaction_date,
+      totalcost,
+      created_by,
+      remark,
+      order_id,
+      contact_id,
+      ponumber,
+      challannumber,
+      transportname,
+      transporttrackingnumber,
+      invoice_date,
+      invoicenumber,
+      po_date,
+      received_from_employee_id,
+      issue_to_employee_id,
+      document_type,
+      movement_type_code,
+      products,
+    } = req.body;
+
+    // Required top-level fields
+    if (!org_id || isNaN(org_id)) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: "org_id is required and must be a number." });
+    }
+    if (!transaction_type || transaction_type !== TRANSACTION_TYPE.INWARD) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `transaction_type must be "${TRANSACTION_TYPE.INWARD}". Received: "${transaction_type}".`,
+      });
+    }
+    if (!transaction_type_master_id || isNaN(transaction_type_master_id)) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: "transaction_type_master_id is required." });
+    }
+    if (!sub_transaction_type_master_id || isNaN(sub_transaction_type_master_id)) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: "sub_transaction_type_master_id is required." });
+    }
+    if (!transaction_date) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: "transaction_date is required." });
+    }
+    if (!Array.isArray(products) || products.length === 0) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: "products must be a non-empty array." });
+    }
+
+    // Per-product validation + cross-payload duplicate barcode detection
+    const seenBarcodeIds = new Set();
+    const seenInternalBarcodes = new Set();
+
+    for (const product of products) {
+      const { productvariant_id, quantity, has_character, individual_tracking, barcode_usage } = product;
+
+      if (!productvariant_id || isNaN(productvariant_id)) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: `Each product must have a valid productvariant_id. Got: ${productvariant_id}`,
+        });
+      }
+      if (!quantity || isNaN(quantity) || Number(quantity) <= 0) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: `quantity must be > 0 for productvariant_id ${productvariant_id}.`,
+        });
+      }
+
+      // individual_tracking: barcode count must exactly match quantity
+      if (has_character === false && individual_tracking === true) {
+        if (!Array.isArray(barcode_usage) || barcode_usage.length !== Number(quantity)) {
+          await transaction.rollback();
+          return res.status(400).json({
+            success: false,
+            message: `For individual_tracking products, barcode_usage.length (${barcode_usage?.length ?? 0}) must equal quantity (${quantity}) for productvariant_id ${productvariant_id}.`,
+          });
+        }
+      }
+
+      // Duplicate barcode checks across entire payload
+      if (Array.isArray(barcode_usage)) {
+        for (const b of barcode_usage) {
+          if (b.barcode_id != null) {
+            if (seenBarcodeIds.has(b.barcode_id)) {
+              await transaction.rollback();
+              return res.status(400).json({
+                success: false,
+                message: `Duplicate barcode_id ${b.barcode_id} found in payload.`,
+              });
+            }
+            seenBarcodeIds.add(b.barcode_id);
+          }
+          if (b.internal_barcode) {
+            if (seenInternalBarcodes.has(b.internal_barcode)) {
+              await transaction.rollback();
+              return res.status(400).json({
+                success: false,
+                message: `Duplicate internal_barcode "${b.internal_barcode}" found in payload.`,
+              });
+            }
+            seenInternalBarcodes.add(b.internal_barcode);
+          }
+        }
+      }
+    }
+    console.log("✅ Step 0 Passed: Payload validated");
+
+    // ──────────────────────────────────────────────────────────
+    // STEP 1 — Generate GRN Document Code
+    // ──────────────────────────────────────────────────────────
+    console.log("📄 Step 1: Generating GRN document code");
+    const documentType = DOCUMENT_TYPE.GRN_INWARD;
+    const { document_sequences_id } = await generateDocumentId(org_id, documentType, transaction);
+
+    if (!document_sequences_id || isNaN(document_sequences_id)) {
+      await transaction.rollback();
+      return res.status(500).json({ success: false, message: "Failed to generate GRN document ID." });
+    }
+
+    const sequenceData = await getDocumentSequences(org_id, documentType);
+    const prefix = sequenceData[0]?.prefix || "";
+    const suffix = sequenceData[0]?.suffix || "";
+    const grn_code = `${prefix ? `${prefix}-` : ""}${document_sequences_id.toString().padStart(5, "0")}${suffix ? `-${suffix}` : ""}`;
+    const transaction_code = grn_code;
+    console.log(`✅ Step 1 Passed: grn_code = ${grn_code}`);
+
+    // ──────────────────────────────────────────────────────────
+    // STEP 2 — Insert Master inventory_transactions Row (ORM)
+    // ──────────────────────────────────────────────────────────
+    console.log("📝 Step 2: Creating master InventoryTransaction record");
+    const masterTransaction = await InventoryTransactions.create(
+      {
+        org_id,
+        transaction_type_master_id,
+        sub_transaction_type_master_id,
+        transaction_date,
+        totalcost: totalcost ?? null,
+        created_by: created_by ?? null,
+        remark: remark ?? null,
+        order_id: order_id ?? null,
+        contact_id: contact_id ?? null,
+        ponumber: ponumber ?? null,
+        challannumber: challannumber ?? null,
+        transportname: transportname ?? null,
+        transporttrackingnumber: transporttrackingnumber ?? null,
+        invoice_date: invoice_date ?? null,
+        invoicenumber: invoicenumber ?? null,
+        po_date: po_date ?? null,
+        received_from_employee_id: received_from_employee_id ?? null,
+        issue_to_employee_id: issue_to_employee_id ?? null,
+        document_type: document_type ?? null,
+        movement_type_code: movement_type_code ?? null,
+        grn_code,
+        transaction_code,
+        created_at: new Date(),
+      },
+      { transaction }
+    );
+
+    const transaction_id = masterTransaction.transaction_id;
+    if (!transaction_id) {
+      await transaction.rollback();
+      return res.status(500).json({ success: false, message: "Failed to create master transaction record." });
+    }
+    console.log(`✅ Step 2 Passed: transaction_id = ${transaction_id}`);
+
+    // ──────────────────────────────────────────────────────────
+    // STEP 3 — Per-Product Loop
+    // ──────────────────────────────────────────────────────────
+    console.log("🔄 Step 3: Processing products...");
+    for (const product of products) {
+      const {
+        productvariant_id,
+        quantity,
+        has_character,
+        individual_tracking,
+        barcode_usage,
+        variant_remarks,
+        scope,
+        vendor_uom,
+        vendor_uom_rate,
+        stock_uom,
+        stock_uom_rate,
+        rate,
+      } = product;
+
+      const qty = Number(quantity);
+
+      // ── 3a. Insert stock_log (ORM) ────────────────────────
+      console.log(`  📦 3a: Creating StockLog for productvariant_id ${productvariant_id}`);
+      const stockLog = await StockLog.create(
+        {
+          org_id,
+          transaction_id,
+          productvariant_id,
+          quantity: qty,
+          variant_remarks: variant_remarks ?? null,
+          scope: scope ?? null,
+          vendor_uom: vendor_uom ?? null,
+          vendor_uom_rate: vendor_uom_rate ?? null,
+          stock_uom: stock_uom ?? null,
+          stock_uom_rate: stock_uom_rate ?? null,
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+        { transaction }
+      );
+
+      const stock_log_id = stockLog.stock_log_id;
+      if (!stock_log_id) {
+        await transaction.rollback();
+        return res.status(500).json({
+          success: false,
+          message: `Failed to insert stock_log for productvariant_id ${productvariant_id}.`,
+        });
+      }
+      console.log(`  ✅ 3a: stock_log_id = ${stock_log_id}`);
+
+      // ── 3b. Insert inventory_itemwise_detail (ORM) ────────
+      console.log(
+        `  📋 3b: Creating InventoryItemWiseDetail for productvariant_id ${productvariant_id}` +
+        ` | has_character=${has_character} | individual_tracking=${individual_tracking}`
+      );
+
+      // ── Case A: has_character=true, individual_tracking=false ──────────────────
+      if (has_character === true && individual_tracking === false) {
+        const internal_barcode =
+          Array.isArray(barcode_usage) && barcode_usage.length > 0
+            ? barcode_usage[0].internal_barcode ?? null
+            : null;
+        const vendor_barcode =
+          Array.isArray(barcode_usage) && barcode_usage.length > 0
+            ? barcode_usage[0].vendor_barcode ?? null
+            : null;
+
+        const detail = await InventoryItemWiseDetail.create(
+          {
+            org_id,
+            productvariant_id,
+            quantity: qty,
+            instock: true,
+            internal_barcode,
+            vendor_barcode,
+            purchase_rate: rate ?? null,
+            stock_log_id_inward: [stock_log_id],
+            total_item_instock: qty,
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+          { transaction }
+        );
+
+        const detail_id = detail.inventory_item_wise_detail_id;
+        if (!detail_id) {
+          await transaction.rollback();
+          return res.status(500).json({
+            success: false,
+            message: `Failed to insert inventory_itemwise_detail (Case A) for productvariant_id ${productvariant_id}.`,
+          });
+        }
+        console.log(`  ✅ 3b Case A: inventory_item_wise_detail_id = ${detail_id}`);
+
+        // ── 3c. Update barcodes (Case A) ──────────────────────
+        if (Array.isArray(barcode_usage) && barcode_usage.length > 0 && barcode_usage[0].barcode_id != null) {
+          await sequelize.query(
+            `UPDATE generated_barcode_details_and_usages
+             SET is_used = true,
+                 inward_inventory_item_wise_details_id = :detail_id,
+                 grn_no = COALESCE(grn_no, :grn_code),
+                 updated_at = NOW()
+             WHERE barcode_id = :barcode_id
+               AND productvariant_id = :productvariant_id`,
+            {
+              replacements: {
+                detail_id,
+                grn_code,
+                barcode_id: barcode_usage[0].barcode_id,
+                productvariant_id,
+              },
+              type: QueryTypes.UPDATE,
+              transaction,
+            }
+          );
+          console.log(`  ✅ 3c Case A: barcode_id ${barcode_usage[0].barcode_id} marked as used`);
+        }
+      }
+      // ── Case B: has_character=false, individual_tracking=true ─────────────────
+      else if (has_character === false && individual_tracking === true) {
+        for (let i = 0; i < qty; i++) {
+          const bc = barcode_usage[i];
+
+          const detail = await InventoryItemWiseDetail.create(
+            {
+              org_id,
+              productvariant_id,
+              quantity: 1,
+              instock: true,
+              internal_barcode: bc?.internal_barcode ?? null,
+              vendor_barcode: bc?.vendor_barcode ?? null,
+              purchase_rate: rate ?? null,
+              stock_log_id_inward: [stock_log_id],
+              total_item_instock: 1,
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+            { transaction }
+          );
+
+          const detail_id = detail.inventory_item_wise_detail_id;
+          if (!detail_id) {
+            await transaction.rollback();
+            return res.status(500).json({
+              success: false,
+              message: `Failed to insert inventory_itemwise_detail (Case B, unit ${i + 1}) for productvariant_id ${productvariant_id}.`,
+            });
+          }
+          console.log(`  ✅ 3b Case B [unit ${i + 1}/${qty}]: inventory_item_wise_detail_id = ${detail_id}`);
+
+          // ── 3c. Update barcodes (Case B, per unit) ─────────────────
+          if (bc?.barcode_id != null) {
+            await sequelize.query(
+              `UPDATE generated_barcode_details_and_usages
+               SET is_used = true,
+                   inward_inventory_item_wise_details_id = :detail_id,
+                   grn_no = COALESCE(grn_no, :grn_code),
+                   updated_at = NOW()
+               WHERE barcode_id = :barcode_id
+                 AND productvariant_id = :productvariant_id`,
+              {
+                replacements: {
+                  detail_id,
+                  grn_code,
+                  barcode_id: bc.barcode_id,
+                  productvariant_id,
+                },
+                type: QueryTypes.UPDATE,
+                transaction,
+              }
+            );
+            console.log(`  ✅ 3c Case B [unit ${i + 1}]: barcode_id ${bc.barcode_id} marked as used`);
+          }
+        }
+      }
+      // ── Case C: has_character=false, individual_tracking=false ────────────────
+      else if (has_character === false && individual_tracking === false) {
+        const detail = await InventoryItemWiseDetail.create(
+          {
+            org_id,
+            productvariant_id,
+            quantity: qty,
+            instock: true,
+            purchase_rate: rate ?? null,
+            stock_log_id_inward: [stock_log_id],
+            total_item_instock: qty,
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+          { transaction }
+        );
+
+        const detail_id = detail.inventory_item_wise_detail_id;
+        if (!detail_id) {
+          await transaction.rollback();
+          return res.status(500).json({
+            success: false,
+            message: `Failed to insert inventory_itemwise_detail (Case C) for productvariant_id ${productvariant_id}.`,
+          });
+        }
+        console.log(`  ✅ 3b Case C: inventory_item_wise_detail_id = ${detail_id}`);
+        // No barcodes to update in Case C
+      } else {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: `Unsupported tracking combination for productvariant_id ${productvariant_id}: has_character=${has_character}, individual_tracking=${individual_tracking}.`,
+        });
+      }
+
+      // ── 3d. Upsert inventory_items balance (ORM: findOrCreate + increment) ────
+      console.log(`  💰 3d: Upserting InventoryItem balance for productvariant_id ${productvariant_id}`);
+      const [inventoryItem, created] = await InventoryItem.findOrCreate({
+        where: { org_id, productvariant_id },
+        defaults: {
+          quantity_on_hand: qty,
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+        transaction,
+      });
+
+      if (!created) {
+        // Row already exists — atomically add the inward quantity
+        await inventoryItem.increment("quantity_on_hand", { by: qty, transaction });
+      }
+
+      const newQty = created
+        ? inventoryItem.quantity_on_hand
+        : Number(inventoryItem.quantity_on_hand) + qty;
+
+      console.log(`  ✅ 3d: quantity_on_hand → ${newQty} for productvariant_id ${productvariant_id}`);
+    } // end product loop
+
+    // ──────────────────────────────────────────────────────────
+    // STEP 4 — Commit
+    // ──────────────────────────────────────────────────────────
+    await transaction.commit();
+    console.log("🎉 InwardStockTransaction committed successfully");
+
+    return res.status(200).json({
+      success: true,
+      message: "Inward stock transaction processed successfully.",
+      transaction_id,
+      grn_code,
+    });
+
+  } catch (error) {
+    if (transaction && !transaction.finished) {
+      await transaction.rollback();
+    }
+    console.error("❌ InwardStockTransaction Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error processing inward stock transaction.",
+      error: error.message,
+    });
+  }
+};
+
+module.exports = {
+  InwardStockTransaction,
+};

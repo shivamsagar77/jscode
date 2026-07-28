@@ -17,3 +17,29 @@ console.log(secondM)
 // let n = arrr.length-2;
 // console.log(arrr[n])
 
+
+// corrent way  
+
+function getSecondLargest(arr) {
+    let largest = -1;
+    let secondLargest = -1;
+
+    for (let i = 0; i < arr.length; i++) {
+
+        // Found new largest
+        if (arr[i] > largest) {
+            secondLargest = largest;
+            largest = arr[i];
+        }
+
+        // Found second largest
+        else if (
+            arr[i] > secondLargest &&
+            arr[i] !== largest
+        ) {
+            secondLargest = arr[i];
+        }
+    }
+
+    return secondLargest;
+}

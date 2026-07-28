@@ -1,0 +1,12 @@
+let str = '';
+
+for(let i=0;i<3;i++){
+    for(let j=0;j<=i;j++){
+        console.log(str+"*")
+    }
+console.log('\n')
+}
+
+
+
+// https://chatgpt.com/c/698ff59c-8b0c-8320-99ec-42b3c677e240

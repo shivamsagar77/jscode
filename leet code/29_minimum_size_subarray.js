@@ -12,6 +12,39 @@
 // Example 3:
 // Input: target = 11, nums = [1,1,1,1,1,1,1,1]
 // Output: 0
+nums =[1,1,1,1,1,1,1,1];
 
+let left =0;
+let right =0;
+let sum =0;
+let min = Infinity;
+let target = 11;
+let count =0;
+// console.log( right<nums.length-1,"condition")
+while(left<=right && right<nums.length){
 
+    console.log(left,"left");
+    console.log(right,"right")
+    console.log(sum,"sum");
+    console.log(target,"target")
+    if(sum <target){
+        sum +=nums[right];
+        console.log(sum,"sum<target")
+        right++;
+        count++;
+    }else if(sum >target){
+       sum -= nums[left];
+       console.log(sum,"sum sum >target")
+       count--;
+       left++;
+       console.log(left,"left  sum >target")
+    }else{
+        left++;
+        min = Math.min(min,count);
+        console.log(min,"min")
 
+    }
+}
+if(min == Infinity){
+    console.log(0)
+}

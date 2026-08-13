@@ -12,6 +12,9 @@
 // Example 3:
 // Input: target = 11, nums = [1,1,1,1,1,1,1,1]
 // Output: 0
+
+// 1 way 
+
 nums =[1,1,1,1,1,1,1,1];
 
 let left =0;
@@ -29,18 +32,18 @@ while(left<=right && right<nums.length){
     console.log(target,"target")
     if(sum <target){
         sum +=nums[right];
-        console.log(sum,"sum<target")
+console.log(sum,"sum<target")
         right++;
-        count++;
-    }else if(sum >target){
+                count++;
+}else if(sum >target){
        sum -= nums[left];
        console.log(sum,"sum sum >target")
        count--;
        left++;
        console.log(left,"left  sum >target")
     }else{
-        left++;
-        min = Math.min(min,count);
+                left++;
+                min = Math.min(min,count);
         console.log(min,"min")
 
     }
@@ -48,3 +51,40 @@ while(left<=right && right<nums.length){
 if(min == Infinity){
     console.log(0)
 }
+
+
+// 2  way 
+
+
+let nums =[1,1,1,1,1,1,1,1];
+// let target = 11;
+// let left = 0;
+// let right = 0;
+// let count = 0;
+// let sum = 0;
+// let min = Infinity;
+while(right < nums.length){
+    console.log(left,"left start");
+    console.log(right,"right start")
+    console.log(sum,"sum start")
+    if(sum <= target){
+        sum += nums[right];
+        right++;
+        console.log(sum,"sum < target")
+        count++;
+    }else{
+        sum -= nums[left];
+        console.log(sum,"else sum")
+        console.log(left,"else left")
+        console.log(right,"else right")
+        console.log(count,"else count")
+        left++;
+        count--;
+        console.log(count,"else count 2")
+        min = Math.min(min,count);
+        console.log(min,"min")
+    }
+}
+
+console.log(min == Infinity ? 0:min);
+// console.log(min)

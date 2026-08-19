@@ -15,27 +15,54 @@
 // Output: 3
 // Explanation: The answer is "wke", with the length of 3.
 // Notice that the answer must be a substring, "pwke" is a subsequence and not a substring.
-let s = "abcabcbb";
 
-let left = 0;
-let right = 0;
-let max = 0;
+// Ritich Way
+
+// let left = 0;
+// let right = 0;
+// let max = 0;
+// let map = new Map();
+// let arr = s.split("");
+// let count = 0;
+
+// while (right < arr.length) {
+    //   if (!map.has(arr[right])) {
+        //     map.set(arr[right], right);
+        //     max = Math.max(max, right - left + 1);
+        //     right++;
+        //     console.log(max, "if");
+        //   } else {
+            //     left = map.get(arr[right]) + 1;
+            //     map.clear();
+            //     map.set(arr[right], right);
+            //     max = Math.max(max, right - left + 1);
+            //     console.log(max, "else");
+            //     right++;
+            //   }
+            // }
+            // console.log(max);
+           
+           
+            // My Way
+  let s =  "bbbbb";
+let left =0;
+let right =0;
+let max =0;
 let map = new Map();
-let arr = s.split("");
-let count = 0;
 
-while (right < arr.length) {
-  if (!map.has(arr[right])) {
-    map.set(arr[right], right);
-    max = Math.max(max, right - left + 1);
+let arr = s.split('')
+console.log(arr,"arr")
+while(right<arr.length){
+
+    console.log(map.has(arr[right]),"map has")
+    if(map.has(arr[right])){
+        left = map.get(arr[right])+1;
+        console.log(left,"left")
+    }
+    map.set(arr[right],right);
+    max= Math.max(max,right-left+1);
+    console.log(max,"max")
     right++;
-    console.log(max, "if");
-  } else {
-    left = map.get(arr[right]) + 1;
-    map.clear();
-    map.set(arr[right], right);
-    max = Math.max(max, right - left + 1);
-    console.log(max, "else");
-  }
+    console.log(right,"right")
 }
-console.log(max);
+console.log(max,"max")

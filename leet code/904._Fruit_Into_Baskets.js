@@ -44,8 +44,8 @@ while(right<arr.length){
      if(map.get(arr[left])===0){
         map.delete(arr[left]);
      }
-     left++;
      count--;
+     left++;
     }
     if(map.size ===k){
 max = (max,count)

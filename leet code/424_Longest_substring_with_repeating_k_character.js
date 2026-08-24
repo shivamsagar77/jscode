@@ -26,15 +26,15 @@ let arr = s.split('');
 let map = new Map();
 while(right<arr.length){
 
-    map.set(arr[right],(map.get(arr[right])||0)+1);  a->1;b->1;a->2,b->2
-    max = Math.max(max,map.get(arr[right])); 1;1;2,2
-    windowsize=right-left+1;1,2,3,4
-    if(windowsize -max>k){no , no ,no,no
+    map.set(arr[right],(map.get(arr[right])||0)+1);  
+    max = Math.max(max,map.get(arr[right])); 
+    windowsize=right-left+1;
+    if(windowsize -max>k){
         map.set(arr[left],(map.get(arr[left])||0)-1);
         left++;
     }
     
-  answer= Math.max(answer,right-left+1);1,2,3,4
-    right++;1,2,3,4
+  answer= Math.max(answer,right-left+1);
+    right++;
 }
 console.log(answer)

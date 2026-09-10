@@ -42,6 +42,7 @@ console.log(sum,"sum<target")
        left++;
        console.log(left,"left  sum >target")
     }else{
+        sum -= nums[left];
                 left++;
                 min = Math.min(min,count);
         console.log(min,"min")

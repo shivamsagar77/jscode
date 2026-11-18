@@ -22,5 +22,4 @@ while(left <= right){
     if(nums[mid]>target){
 mid = right-mid;
     }
-
 }
